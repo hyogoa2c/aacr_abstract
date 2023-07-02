@@ -1,0 +1,4 @@
+data/vector/store/aacr_metas.pkl filter=lfs diff=lfs merge=lfs -text
+data/vector/store/aacr_metas.csv filter=lfs diff=lfs merge=lfs -text
+data/vector/store/abstract_vec.npy filter=lfs diff=lfs merge=lfs -text
+data/vector/store/title_vec.npy filter=lfs diff=lfs merge=lfs -text
