@@ -22,7 +22,7 @@ retry_kwargs = {
     # Maximum wait time between retries in milliseconds
 }
 
-DOMAIN = "https://test.to/"
+# DOMAIN = "https://test.to/"
 
 
 @retry(**retry_kwargs)
@@ -192,8 +192,8 @@ def create_summary(placeholder, title, abstract):
 
 
 def main():
-    st.set_page_config(page_title="LLMによるASCO演題検索システム")
-    image = Image.open("banner.jpg")
+    st.set_page_config(page_title="LLMによるAACR演題検索システム")
+    image = Image.open("banner.png")
 
     st.image(
         image,
@@ -208,7 +208,7 @@ def main():
         "また、論文の内容をChatGPTに要約してもらうことができます。"
     )
 
-    openai.api_key = os.environ["OPENAI_API_KEY"]
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
 
     if "search_clicked" not in st.session_state:
         st.session_state.search_clicked = False
@@ -287,11 +287,12 @@ def main():
             st.session_state.summary = [""] * len(results)
 
         for i, (_, row) in enumerate(results.iterrows()):
+            id = row["id"]
             title = row["title"]
             # pdf_file = row["pdf_file_name"]
             authors = row["authors"]
             abstract = row["abstract"]
-            st.markdown(f"### **[{title}]**")
+            st.markdown(f"#### {id}: **{title}**")
             # st.markdown(f"### **[{title}]({DOMAIN + pdf_file})**")
             st.markdown(f"{abstract}")
             st.markdown(f"{authors}")
