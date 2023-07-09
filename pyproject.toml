@@ -18,6 +18,8 @@ beautifulsoup4 = "^4.12.2"
 selenium = "^4.10.0"
 webdriver-manager = "^3.8.6"
 tiktoken = "^0.4.0"
+gdown = "^4.7.1"
+google-api-python-client = "^2.92.0"
 
 [tool.poetry.group.dev.dependencies]
 flake8 = "^6.0.0"
