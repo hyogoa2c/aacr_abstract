@@ -24,17 +24,22 @@ retry_kwargs = {
 
 DOMAIN = "https://test.to/"
 
+metas_csv = "./data/vector/store/aacr_metas.csv"
+tag_vec_pickle = "./data/vector/store/tag_vec.pickle"
+title_vec_npy = "./data/vector/store/title_vec.npy"
+abstract_vec_npy = "./data/vector/store/abstract_vec.npy"
+
 
 @retry(**retry_kwargs)
 def vectorize(text: str, model="text-embedding-ada-002"):
     text = text.replace("\n", " ")
     return openai.Embedding.create(
         input=[text], model=model
-        )["data"][0]["embedding"]
+        )["data"][0]["embedding"]  # type: ignore
 
 
 def load_tag_vector():
-    with open("resources/tag_vector.pickle", "rb") as f:
+    with open(tag_vec_pickle, "rb") as f:
         tag_vector = pickle.load(f)
     return tag_vector
 
@@ -48,12 +53,12 @@ def create_query_vec(query_tags, tag_vector):
 
 
 def search_rows(tag_query_vector, text_query_vector, k, alpha):
-    meta_df = pd.read_csv("./data/vector/store/aacr_metas.csv", encoding="utf-8")
+    meta_df = pd.read_csv(metas_csv, encoding="utf-8")
     title_vec = np.load(
-        "./data/vector/store/title_vec.npy", allow_pickle=True
+        title_vec_npy, allow_pickle=True
         )
     abstract_vec = np.load(
-        "./data/vector/store/abstract_vec.npy", allow_pickle=True
+        abstract_vec_npy, allow_pickle=True
         )
 
     def calc_score(query_vector):
