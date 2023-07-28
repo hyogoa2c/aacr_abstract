@@ -10,7 +10,41 @@ import threading
 import time
 import json
 import os
+from ast import literal_eval
+
 import requests
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+import io
+
+
+# サービスアカウントの認証情報を読み込む
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+
+# Google Drive APIのserviceオブジェクトを作成する
+drive_service = build('drive', 'v3', credentials=creds)
+
+# .npyファイルのIDを指定してリクエストを作成する
+abstract_vec_id = '1-GuSdkDGI2u8JAXibKsU4G1KCPWMK7rV'
+title_vec_id = '1-70bNFFhVrmJKp86i0BzehoeEb8dplHP'
+metas_id = '1-8aTZHij2eu7xF-Dil4PNLcCftX_peqD'
+
+
+def load_gdrive_file(file_id):
+    request = drive_service.files().get_media(fileId=file_id)
+
+    # ファイルを一時的にメモリ上にダウンロードする
+    downloaded = io.BytesIO()
+    downloader = MediaIoBaseDownload(downloaded, request)
+    done = False
+    while done is False:
+        _, done = downloader.next_chunk()
+
+    downloaded.seek(0)
+
+    return downloaded
+
 
 # Retry parameters
 retry_kwargs = {
@@ -22,13 +56,28 @@ retry_kwargs = {
     # Maximum wait time between retries in milliseconds
 }
 
-DOMAIN = "https://test.to/"
+# DOMAIN = "https://test.to/"
 
-metas_csv = "./data/vector/store/aacr_metas.csv"
 tag_vec_pickle = "./data/vector/store/tag_vec.pickle"
-title_vec_npy = "./data/vector/store/title_vec.npy"
-abstract_vec_npy = "./data/vector/store/abstract_vec.npy"
 
+metas_csv_file = "./data/vector/store/aacr_metas.csv"
+title_vec_npy_file = "./data/vector/store/title_vec.npy"
+abstract_vec_npy_file = "./data/vector/store/abstract_vec.npy"
+
+if os.path.exists(metas_csv_file):
+    metas_csv_source = metas_csv_file
+else:
+    metas_csv_source = load_gdrive_file(metas_id)
+
+if os.path.exists(title_vec_npy_file):
+    title_vec_source = title_vec_npy_file
+else:
+    title_vec_source = load_gdrive_file(title_vec_id)
+
+if os.path.exists(abstract_vec_npy_file):
+    abstract_vec_source = abstract_vec_npy_file
+else:
+    abstract_vec_source = load_gdrive_file(abstract_vec_id)
 
 @retry(**retry_kwargs)
 def vectorize(text: str, model="text-embedding-ada-002"):
@@ -53,13 +102,9 @@ def create_query_vec(query_tags, tag_vector):
 
 
 def search_rows(tag_query_vector, text_query_vector, k, alpha):
-    meta_df = pd.read_csv(metas_csv, encoding="utf-8")
-    title_vec = np.load(
-        title_vec_npy, allow_pickle=True
-        )
-    abstract_vec = np.load(
-        abstract_vec_npy, allow_pickle=True
-        )
+    meta_df = pd.read_csv(metas_csv_source, converters={'authors': literal_eval, 'affiliations': literal_eval}, encoding="utf-8")
+    title_vec = np.load(title_vec_source)
+    abstract_vec = np.load(abstract_vec_source)
 
     def calc_score(query_vector):
         title_score = title_vec @ query_vector
@@ -197,8 +242,8 @@ def create_summary(placeholder, title, abstract):
 
 
 def main():
-    st.set_page_config(page_title="LLMによるASCO演題検索システム")
-    image = Image.open("banner.jpg")
+    st.set_page_config(page_title="LLMによるAACR演題検索システム")
+    image = Image.open("banner.png")
 
     st.image(
         image,
@@ -213,7 +258,7 @@ def main():
         "また、論文の内容をChatGPTに要約してもらうことができます。"
     )
 
-    openai.api_key = os.environ["OPENAI_API_KEY"]
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
 
     if "search_clicked" not in st.session_state:
         st.session_state.search_clicked = False
@@ -292,11 +337,12 @@ def main():
             st.session_state.summary = [""] * len(results)
 
         for i, (_, row) in enumerate(results.iterrows()):
+            id = row["id"]
             title = row["title"]
             # pdf_file = row["pdf_file_name"]
             authors = row["authors"]
             abstract = row["abstract"]
-            st.markdown(f"### **[{title}]**")
+            st.markdown(f"#### {id}: **{title}**")
             # st.markdown(f"### **[{title}]({DOMAIN + pdf_file})**")
             st.markdown(f"{abstract}")
             st.markdown(f"{authors}")
