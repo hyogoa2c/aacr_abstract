@@ -58,7 +58,7 @@ retry_kwargs = {
 
 # DOMAIN = "https://test.to/"
 
-tag_vec_pickle = "./data/vector/store/tag_vec.pickle"
+tag_vec_pickle = "./resources/tag_vector.pickle"
 
 metas_csv_file = "./data/vector/store/aacr_metas.csv"
 title_vec_npy_file = "./data/vector/store/title_vec.npy"
@@ -78,6 +78,7 @@ if os.path.exists(abstract_vec_npy_file):
     abstract_vec_source = abstract_vec_npy_file
 else:
     abstract_vec_source = load_gdrive_file(abstract_vec_id)
+
 
 @retry(**retry_kwargs)
 def vectorize(text: str, model="text-embedding-ada-002"):
@@ -102,7 +103,11 @@ def create_query_vec(query_tags, tag_vector):
 
 
 def search_rows(tag_query_vector, text_query_vector, k, alpha):
-    meta_df = pd.read_csv(metas_csv_source, converters={'authors': literal_eval, 'affiliations': literal_eval}, encoding="utf-8")
+    meta_df = pd.read_csv(
+        metas_csv_source,
+        converters={'authors': literal_eval, 'affiliations': literal_eval},
+        encoding="utf-8"
+        )
     title_vec = np.load(title_vec_source)
     abstract_vec = np.load(abstract_vec_source)
 
@@ -339,13 +344,22 @@ def main():
         for i, (_, row) in enumerate(results.iterrows()):
             id = row["id"]
             title = row["title"]
-            # pdf_file = row["pdf_file_name"]
-            authors = row["authors"]
             abstract = row["abstract"]
+            if len(row["authors"]) == 1:
+                authors = row["authors"]
+            elif len(row["authors"]) == 2:
+                authors = row["authors"][0] + ' and ' + row["authors"][1]
+            else:
+                authors = row["authors"][0] + ' and ' + row["authors"][1] + ' et al.'
+            if len(row["affiliations"]) == 1:
+                affiliations = row["affiliations"][0]
+            else:
+                affiliations = row["affiliations"][0] + " and " + str(len(row["affiliations"]) - 1) + " others"
             st.markdown(f"#### {id}: **{title}**")
             # st.markdown(f"### **[{title}]({DOMAIN + pdf_file})**")
             st.markdown(f"{abstract}")
-            st.markdown(f"{authors}")
+            st.markdown(f"Author(s)\: {authors}")
+            st.markdown(f"Affiliation(s)\: {affiliations}")
 
             link = f"[この研究と似た論文を探す](/?q={urllib.parse.quote(title)})"
             st.markdown(link, unsafe_allow_html=True)
