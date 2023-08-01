@@ -6,7 +6,7 @@ from retrying import retry
 import threading
 import json
 from typing import Union
-
+import time
 import os
 
 import requests
@@ -149,13 +149,14 @@ def chat_completion_request(
 
 # Refactored Code Continued
 
-def generate_summary(title: str, abstract: str) -> str:
+def generate_summary(placeholder, title: str, abstract: str) -> str:
     """Generate a summary for a title and abstract using ChatGPT.
     Args:
         title: The title.
         abstract: The abstract.
+        placeholder: The placeholder text to use for the status of summarizing abstract
     Returns:
-        The generated summary as a string.
+        The generated summary as an abstract.
     """
     prompt = """
     以下の論文について何がすごいのか、次の項目を日本語で出力してください。
@@ -199,17 +200,31 @@ def generate_summary(title: str, abstract: str) -> str:
         }
     ]
 
+    placeholder.markdown("ChatGPTが考え中です...😕", unsafe_allow_html=True)
+
     messages = [{"role": "user", "content": prompt}]
-    result: list = []
+    result = []
     thread = threading.Thread(
         target=chat_completion_request,
         args=(messages, result, "gpt-3.5-turbo-0613", functions)
     )
     thread.start()
+    i = 0
+    faces = ["😕", "😆", "😴", "😊", "😱", "😎", "😏"]
+    while thread.is_alive():
+        i += 1
+        face = faces[i % len(faces)]
+        placeholder.markdown(
+            f"ChatGPTが考え中です...{face}", unsafe_allow_html=True
+            )
+        time.sleep(0.5)
     thread.join()
 
     if len(result) == 0:
-        return "ChatGPTの結果取得に失敗しました...😢"
+        placeholder.markdown(
+            "ChatGPTの結果取得に失敗しました...😢", unsafe_allow_html=True
+            )
+        return
 
     res = result[0]
     func_result = res.json()["choices"][0]["message"]["function_call"]["arguments"]
@@ -226,4 +241,7 @@ def generate_summary(title: str, abstract: str) -> str:
         <li><b>結果、何が達成できたのか</b></li>
         <li style="list-style:none;">{a3}</li>
     </ol>"""
+    render_text = f"""<div style="border: 1px rgb(128, 132, 149) solid;
+                        padding: 20px;">{gen_text}</div>"""
+    placeholder.markdown(render_text, unsafe_allow_html=True)
     return gen_text

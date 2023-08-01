@@ -117,10 +117,16 @@ def display_search_results(results: pd.DataFrame):
 
         if st.session_state.summary_clicked[i]:
             if len(st.session_state.summary[i]) == 0:
-                st.session_state.summary[i] = generate_summary(
-                    row["title"], row["abstract"]
+                placeholder = st.empty()
+                gen_text = generate_summary(
+                    placeholder, row["title"], row["abstract"]
                     )
-            st.markdown(st.session_state.summary[i], unsafe_allow_html=True)
+                st.session_state.summary[i] = gen_text
+            else:
+                print("summary exists")
+                st.markdown(
+                    st.session_state.summary[i], unsafe_allow_html=True
+                    )
 
         st.markdown("---")
 
@@ -164,19 +170,15 @@ def main():
         list(tag_vector.keys()),
         []
     )
-    alpha = st.slider(
-        "タイトルとアブストラクトの重み（0: アブストラクトのみ, 1: タイトルのみ）",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.5,
-        step=0.1,
+
+    target_options = ["タイトルから検索", "タイトルとアブストラクトから検索", "アブストラクトから検索"]
+    target = st.radio("検索条件", target_options, on_change=clear_session)
+    ratio = target_options.index(target) / 2.0
+
+    num_results = st.selectbox(
+        "表示件数:", (20, 50, 100, 200), index=0, on_change=clear_session
     )
-    k = st.number_input(
-        "表示する論文数",
-        min_value=1,
-        max_value=20,
-        value=5,
-    )
+
     st.write("検索するには「検索」ボタンをクリックしてください。")
 
     if st.button("検索"):
@@ -196,7 +198,7 @@ def main():
             if len(query_text) > 0:
                 text_query_vector = generate_text_embedding(query_text)
 
-            results = search_for_rows(tag_query_vector, text_query_vector, k, alpha)
+            results = search_for_rows(tag_query_vector, text_query_vector, k=num_results, alpha=ratio)
 
         if len(results) > 0:
             st.success("検索が完了しました。以下に結果を表示します。")
