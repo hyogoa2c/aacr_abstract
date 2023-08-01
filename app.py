@@ -1,110 +1,58 @@
 import streamlit as st
 import pandas as pd
-import pickle
 import numpy as np
 import openai
-from retrying import retry
 from PIL import Image
 import urllib
-import threading
-import time
-import json
-import os
 from ast import literal_eval
 
-import requests
+from src.utils import (
+    generate_text_embedding,
+    load_source_file,
+    load_tag_vector,
+    calculate_score,
+    create_query_vector,
+    generate_summary
+    )
 
 
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-import io
-
-
-# サービスアカウントの認証情報を読み込む
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
-
-# Google Drive APIのserviceオブジェクトを作成する
-drive_service = build('drive', 'v3', credentials=creds)
-
-# .npyファイルのIDを指定してリクエストを作成する
+# File IDs
 abstract_vec_id = '1-GuSdkDGI2u8JAXibKsU4G1KCPWMK7rV'
 title_vec_id = '1-70bNFFhVrmJKp86i0BzehoeEb8dplHP'
 metas_id = '1-8aTZHij2eu7xF-Dil4PNLcCftX_peqD'
 
-
-def load_gdrive_file(file_id):
-    request = drive_service.files().get_media(fileId=file_id)
-
-    # ファイルを一時的にメモリ上にダウンロードする
-    downloaded = io.BytesIO()
-    downloader = MediaIoBaseDownload(downloaded, request)
-    done = False
-    while done is False:
-        _, done = downloader.next_chunk()
-
-    downloaded.seek(0)
-
-    return downloaded
+# File paths
+tag_vec_pickle = "./resources/tag_vector.pickle"
+metas_csv_file = "./data/vector/store/aacr_metas.csv"
+title_vec_npy_file = "./data/vector/store/title_vec.npy"
+abstract_vec_npy_file = "./data/vector/store/abstract_vec.npy"
 
 
 # Retry parameters
 retry_kwargs = {
     "stop_max_attempt_number": 5,
-    # Maximum number of retry attempts
     "wait_exponential_multiplier": 1000,
-    # Initial wait time between retries in milliseconds
     "wait_exponential_max": 10000,
-    # Maximum wait time between retries in milliseconds
 }
 
-# DOMAIN = "https://test.to/"
-
-tag_vec_pickle = "./resources/tag_vector.pickle"
-
-metas_csv_file = "./data/vector/store/aacr_metas.csv"
-title_vec_npy_file = "./data/vector/store/title_vec.npy"
-abstract_vec_npy_file = "./data/vector/store/abstract_vec.npy"
-
-if os.path.exists(metas_csv_file):
-    metas_csv_source = metas_csv_file
-else:
-    metas_csv_source = load_gdrive_file(metas_id)
-
-if os.path.exists(title_vec_npy_file):
-    title_vec_source = title_vec_npy_file
-else:
-    title_vec_source = load_gdrive_file(title_vec_id)
-
-if os.path.exists(abstract_vec_npy_file):
-    abstract_vec_source = abstract_vec_npy_file
-else:
-    abstract_vec_source = load_gdrive_file(abstract_vec_id)
+# Load source files
+metas_csv_source = load_source_file(metas_csv_file, metas_id)
+title_vec_source = load_source_file(title_vec_npy_file, title_vec_id)
+abstract_vec_source = load_source_file(abstract_vec_npy_file, abstract_vec_id)
 
 
-@retry(**retry_kwargs)
-def vectorize(text: str, model="text-embedding-ada-002"):
-    text = text.replace("\n", " ")
-    return openai.Embedding.create(
-        input=[text], model=model
-        )["data"][0]["embedding"]  # type: ignore
-
-
-def load_tag_vector():
-    with open(tag_vec_pickle, "rb") as f:
-        tag_vector = pickle.load(f)
-    return tag_vector
-
-
-def create_query_vec(query_tags, tag_vector):
-    query_vector = []
-    for tag in query_tags:
-        query_vector.append(tag_vector[tag])
-    query_vector = sum(np.array(query_vector)) / len(query_vector)
-    return query_vector
-
-
-def search_rows(tag_query_vector, text_query_vector, k, alpha):
+def search_for_rows(
+    tag_query_vector: np.ndarray, text_query_vector: np.ndarray, k: int, alpha: float
+) -> pd.DataFrame:
+    """Search for rows based on a tag query vector and a text query vector.
+    Args:
+        tag_query_vector: The tag query vector.
+        text_query_vector: The text query vector.
+        k: The number of rows to return.
+        alpha: The weight for the title score.
+    Returns:
+        The top k rows as a DataFrame.
+    """
     meta_df = pd.read_csv(
         metas_csv_source,
         converters={'authors': literal_eval, 'affiliations': literal_eval},
@@ -113,140 +61,77 @@ def search_rows(tag_query_vector, text_query_vector, k, alpha):
     title_vec = np.load(title_vec_source)
     abstract_vec = np.load(abstract_vec_source)
 
-    def calc_score(query_vector):
-        title_score = title_vec @ query_vector
-        abst_score = abstract_vec @ query_vector
-        return alpha * title_score + (1 - alpha) * abst_score
-
     if tag_query_vector is not None and text_query_vector is not None:
         query_vector = (tag_query_vector + text_query_vector) / 2.0
-        score = calc_score(query_vector)
-
     elif tag_query_vector is not None:
-        score = calc_score(tag_query_vector)
-
+        query_vector = tag_query_vector
     elif text_query_vector is not None:
-        score = calc_score(text_query_vector)
-
+        query_vector = text_query_vector
     else:
-        raise ValueError("both query vector is None")
+        raise ValueError("Both query vectors are None")
 
+    score = calculate_score(title_vec, abstract_vec, query_vector, alpha)
     top_k_indices = np.argsort(-score)[:k]
     return meta_df.iloc[top_k_indices]
 
 
-def chat_completion_request(
-    messages, functions=None, result=[], model="gpt-3.5-turbo-0613"
-):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + openai.api_key,
-    }
-    json_data = {"model": model, "messages": messages}
-    if functions is not None:
-        json_data.update({"functions": functions})
-    try:
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=json_data,
-        )
-        result.append(response)
-    except Exception as e:
-        print("Unable to generate ChatCompletion response")
-        print(f"Exception: {e}")
+def display_search_results(results: pd.DataFrame):
+    """Display the search results.
+    Args:
+        results: The search results as a DataFrame.
+    """
+    results.fillna("", inplace=True)
+
+    if "summary_clicked" not in st.session_state:
+        st.session_state.summary_clicked = [False] * len(results)
+
+    if "summary" not in st.session_state:
+        st.session_state.summary = [""] * len(results)
+
+    for i, (_, row) in enumerate(results.iterrows()):
+        id = row["id"]
+        title = row["title"]
+        abstract = row["abstract"]
+        if len(row["authors"]) == 1:
+            authors = row["authors"]
+        elif len(row["authors"]) == 2:
+            authors = row["authors"][0] + ' and ' + row["authors"][1]
+        else:
+            authors = row["authors"][0] + ' and ' + row["authors"][1] + ' et al.'
+        if len(row["affiliations"]) == 1:
+            affiliations = row["affiliations"][0]
+        else:
+            affiliations = row["affiliations"][0] + " and " + str(
+                len(row["affiliations"]) - 1
+                ) + " others"
+        st.markdown(f"#### {id}: **{title}**")
+        st.markdown(f"{abstract}")
+        st.markdown(f"Author(s)\: {authors}")
+        st.markdown(f"Affiliation(s)\: {affiliations}")
+
+        link = f"[この研究と似た論文を探す](/?q={urllib.parse.quote(title)})"
+        st.markdown(link, unsafe_allow_html=True)
+
+        if st.button("この研究の何がすごいのかChatGPTに聞く", key=f"summary_{i}"):
+            st.session_state.summary_clicked[i] = True
+
+        if st.session_state.summary_clicked[i]:
+            if len(st.session_state.summary[i]) == 0:
+                placeholder = st.empty()
+                gen_text = generate_summary(
+                    placeholder, row["title"], row["abstract"]
+                    )
+                st.session_state.summary[i] = gen_text
+            else:
+                print("summary exists")
+                st.markdown(
+                    st.session_state.summary[i], unsafe_allow_html=True
+                    )
+
+        st.markdown("---")
 
 
-def create_summary(placeholder, title, abstract):
-    prompt = """
-    以下の論文について何がすごいのか、次の項目を日本語で出力してください。
-
-    (1)既存研究では何ができなかったのか。
-    (2)どのようなアプローチでそれを解決しようとしたか
-    (3)結果、何が達成できたのか
-
-
-    タイトル: {title}
-    アブストラクト: {abstract}
-    日本語で出力してください。
-    """.format(
-        title=title, abstract=abstract
-    )
-
-    functions = [
-        {
-            "name": "format_output",
-            "description": "アブストラクトのサマリー",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "problem_of_existing_research": {
-                        "type": "string",
-                        "description": "既存研究では何ができなかったのか",
-                    },
-                    "how_to_solve": {
-                        "type": "string",
-                        "description": "どのようなアプローチでそれを解決しようとしたか",
-                    },
-                    "what_they_achieved": {
-                        "type": "string",
-                        "description": "結果、何が達成できたのか",
-                    },
-                },
-                "required": [
-                    "problem_of_existing_research",
-                    "how_to_solve",
-                    "what_they_achieved",
-                ],
-            },
-        }
-    ]
-
-    placeholder.markdown("ChatGPTが考え中です...😕", unsafe_allow_html=True)
-
-    m = [{"role": "user", "content": prompt}]
-    result = []
-    thread = threading.Thread(
-        target=chat_completion_request, args=(m, functions, result)
-    )
-    thread.start()
-    i = 0
-    faces = ["😕", "😆", "😴", "😊", "😱", "😎", "😏"]
-    while thread.is_alive():
-        i += 1
-        face = faces[i % len(faces)]
-        placeholder.markdown(
-            f"ChatGPTが考え中です...{face}", unsafe_allow_html=True
-            )
-        time.sleep(0.5)
-    thread.join()
-
-    if len(result) == 0:
-        placeholder.markdown(
-            "ChatGPTの結果取得に失敗しました...😢", unsafe_allow_html=True
-            )
-        return
-
-    res = result[0]
-    func_result = res.json()["choices"][0]["message"]["function_call"]["arguments"]
-    output = json.loads(func_result)
-    a1 = output["problem_of_existing_research"]
-    a2 = output["how_to_solve"]
-    a3 = output["what_they_achieved"]
-    gen_text = f"""以下の項目についてChatGPTが回答します。
-    <ol>
-        <li><b>既存研究では何ができなかったのか</b></li>
-        <li style="list-style:none;">{a1}</li>
-        <li><b>どのようなアプローチでそれを解決しようとしたか</b></li>
-        <li style="list-style:none;">{a2}</li>
-        <li><b>結果、何が達成できたのか</b></li>
-        <li style="list-style:none;">{a3}</li>
-    </ol>"""
-    render_text = f"""<div style="border: 1px rgb(128, 132, 149) solid;
-                        padding: 20px;">{gen_text}</div>"""
-    placeholder.markdown(render_text, unsafe_allow_html=True)
-    return gen_text
-
+# Refactored Code Continued
 
 def main():
     st.set_page_config(page_title="LLMによるAACR演題検索システム")
@@ -254,7 +139,7 @@ def main():
 
     st.image(
         image,
-        caption="April 14 - 19, 2023, Orange County Convention Center, Orlando, Florida",
+        caption="April 14-19, 2023, Orange County Convention Center, Orlando, Florida",
         use_column_width=True,
     )
 
@@ -274,23 +159,16 @@ def main():
         st.session_state.search_clicked = False
         if "summary_clicked" in st.session_state:
             st.session_state.pop("summary_clicked")
-
         if "summary" in st.session_state:
             st.session_state.pop("summary")
 
-    tag_vector = load_tag_vector()
+    tag_vector = load_tag_vector(tag_vec_pickle)
 
-    query_text = st.text_input(
-        "検索キーワード(日本語 or 英語) ",
-        value="",
-        on_change=clear_session,
-        # disabled=not api_available,
-    )
-
+    query_text = st.text_input("テキストで検索", "")
     query_tags = st.multiselect(
-        "[オプション] タグの選択(複数選択可)",
-        options=tag_vector.keys(),
-        on_change=clear_session
+        "タグで検索",
+        list(tag_vector.keys()),
+        []
     )
 
     target_options = ["タイトルから検索", "タイトルとアブストラクトから検索", "アブストラクトから検索"]
@@ -301,92 +179,34 @@ def main():
         "表示件数:", (20, 50, 100, 200), index=0, on_change=clear_session
     )
 
+    st.write("検索するには「検索」ボタンをクリックしてください。")
+
     if st.button("検索"):
         st.session_state.search_clicked = True
+        if "summary_clicked" in st.session_state:
+            st.session_state.pop("summary_clicked")
+        if "summary" in st.session_state:
+            st.session_state.pop("summary")
 
-    has_get_params = False
-    get_query_params = st.experimental_get_query_params()
-    if (
-        len(get_query_params.get("q", "")) > 0
-        and st.session_state.search_clicked == False
-    ):
-        query_text = get_query_params["q"][0]
-        print("query_text", query_text)
-        query_tags = []
-        has_get_params = True
-
-    if (
-        st.session_state.search_clicked and (
-            len(query_tags) > 0 or len(query_text) > 0
-            )
-    ) or has_get_params:
-        st.markdown("## **検索結果**")
-
-        if len(query_tags):
-            tag_query_vector = create_query_vec(query_tags, tag_vector)
-        else:
+    if st.session_state.search_clicked:
+        with st.spinner("検索中..."):
             tag_query_vector = None
+            if len(query_tags) > 0:
+                tag_query_vector = create_query_vector(query_tags, tag_vector)
 
-        if len(query_text) > 0:
-            text_query_vector = np.array(vectorize(query_text))
-        else:
             text_query_vector = None
+            if len(query_text) > 0:
+                text_query_vector = generate_text_embedding(query_text)
 
-        results = search_rows(
-            tag_query_vector, text_query_vector, k=num_results, alpha=ratio
-        )
-        results.fillna("", inplace=True)
+            results = search_for_rows(tag_query_vector, text_query_vector, k=num_results, alpha=ratio)
 
-        if "summary_clicked" not in st.session_state:
-            st.session_state.summary_clicked = [False] * len(results)
+        if len(results) > 0:
+            st.success("検索が完了しました。以下に結果を表示します。")
+            display_search_results(results)
+        else:
+            st.warning("該当する論文が見つかりませんでした。")
 
-        if "summary" not in st.session_state:
-            st.session_state.summary = [""] * len(results)
-
-        for i, (_, row) in enumerate(results.iterrows()):
-            id = row["id"]
-            title = row["title"]
-            abstract = row["abstract"]
-            if len(row["authors"]) == 1:
-                authors = row["authors"]
-            elif len(row["authors"]) == 2:
-                authors = row["authors"][0] + ' and ' + row["authors"][1]
-            else:
-                authors = row["authors"][0] + ' and ' + row["authors"][1] + ' et al.'
-            if len(row["affiliations"]) == 1:
-                affiliations = row["affiliations"][0]
-            else:
-                affiliations = row["affiliations"][0] + " and " + str(len(row["affiliations"]) - 1) + " others"
-            st.markdown(f"#### {id}: **{title}**")
-            # st.markdown(f"### **[{title}]({DOMAIN + pdf_file})**")
-            st.markdown(f"{abstract}")
-            st.markdown(f"Author(s)\: {authors}")
-            st.markdown(f"Affiliation(s)\: {affiliations}")
-
-            link = f"[この研究と似た論文を探す](/?q={urllib.parse.quote(title)})"
-            st.markdown(link, unsafe_allow_html=True)
-
-            if st.button(
-                "この研究の何がすごいのかChatGPTに聞く",
-                key=f"summary_{i}",
-                # disabled=st.session_state.token == "",
-            ):
-                st.session_state.summary_clicked[i] = True
-
-            if st.session_state.summary_clicked[i]:
-                if len(st.session_state.summary[i]) == 0:
-                    placeholder = st.empty()
-                    gen_text = create_summary(
-                        placeholder, row["title"], row["abstract"]
-                        )
-                    st.session_state.summary[i] = gen_text
-                else:
-                    print("summary exists")
-                    st.markdown(
-                        st.session_state.summary[i], unsafe_allow_html=True
-                        )
-
-            st.markdown("---")
+    st.button("クリア", on_click=clear_session)
 
 
 if __name__ == "__main__":
