@@ -3,18 +3,24 @@ import pandas as pd
 import numpy as np
 import openai
 from PIL import Image
-import urllib
+import urllib.parse
 from ast import literal_eval
 
 from src.utils import (
-    generate_text_embedding,
-    load_source_file,
-    load_tag_vector,
-    calculate_score,
-    create_query_vector,
-    generate_summary
+    ApiKeyManager,
+    GoogleDriveHandler,
+    OpenAiHandler,
+    ScoreCalculator,
+    SummaryGenerator
     )
 
+secrets = dict(st.secrets)
+
+api_key_manager = ApiKeyManager(secrets)
+file_handler = GoogleDriveHandler(api_key_manager)
+openai_handler = OpenAiHandler(api_key_manager)
+abstract_score = ScoreCalculator()
+abstract_summary = SummaryGenerator(openai_handler)
 
 # File IDs
 abstract_vec_id = '1-GuSdkDGI2u8JAXibKsU4G1KCPWMK7rV'
@@ -35,10 +41,13 @@ retry_kwargs = {
     "wait_exponential_max": 10000,
 }
 
+embedding_model = "text-embedding-ada-002"
 # Load source files
-metas_csv_source = load_source_file(metas_csv_file, metas_id)
-title_vec_source = load_source_file(title_vec_npy_file, title_vec_id)
-abstract_vec_source = load_source_file(abstract_vec_npy_file, abstract_vec_id)
+metas_csv_source = file_handler.load_source_file(metas_csv_file, metas_id)
+title_vec_source = file_handler.load_source_file(title_vec_npy_file, title_vec_id)
+abstract_vec_source = file_handler.load_source_file(
+    abstract_vec_npy_file, abstract_vec_id
+    )
 
 
 def search_for_rows(
@@ -70,7 +79,7 @@ def search_for_rows(
     else:
         raise ValueError("Both query vectors are None")
 
-    score = calculate_score(title_vec, abstract_vec, query_vector, alpha)
+    score = abstract_score.calculate_score(title_vec, abstract_vec, query_vector, alpha)
     top_k_indices = np.argsort(-score)[:k]
     return meta_df.iloc[top_k_indices]
 
@@ -118,7 +127,7 @@ def display_search_results(results: pd.DataFrame):
         if st.session_state.summary_clicked[i]:
             if len(st.session_state.summary[i]) == 0:
                 placeholder = st.empty()
-                gen_text = generate_summary(
+                gen_text = abstract_summary.generate_summary(
                     placeholder, row["title"], row["abstract"]
                     )
                 st.session_state.summary[i] = gen_text
@@ -162,7 +171,7 @@ def main():
         if "summary" in st.session_state:
             st.session_state.pop("summary")
 
-    tag_vector = load_tag_vector(tag_vec_pickle)
+    tag_vector = file_handler.load_pickle_file(tag_vec_pickle)
 
     query_text = st.text_input("テキストで検索", "")
     query_tags = st.multiselect(
@@ -173,7 +182,7 @@ def main():
 
     target_options = ["タイトルから検索", "タイトルとアブストラクトから検索", "アブストラクトから検索"]
     target = st.radio("検索条件", target_options, on_change=clear_session)
-    ratio = target_options.index(target) / 2.0
+    ratio = target_options.index(target) / 2.0  # type: ignore
 
     num_results = st.selectbox(
         "表示件数:", (20, 50, 100, 200), index=0, on_change=clear_session
@@ -192,13 +201,19 @@ def main():
         with st.spinner("検索中..."):
             tag_query_vector = None
             if len(query_tags) > 0:
-                tag_query_vector = create_query_vector(query_tags, tag_vector)
+                tag_query_vector = abstract_score.create_query_vector(
+                    query_tags, tag_vector
+                    )
 
             text_query_vector = None
             if len(query_text) > 0:
-                text_query_vector = generate_text_embedding(query_text)
+                text_query_vector = openai_handler.generate_text_embedding(
+                    query_text, embedding_model
+                    )
 
-            results = search_for_rows(tag_query_vector, text_query_vector, k=num_results, alpha=ratio)
+            results = search_for_rows(
+                tag_query_vector, text_query_vector, k=num_results, alpha=ratio
+                )
 
         if len(results) > 0:
             st.success("検索が完了しました。以下に結果を表示します。")
