@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import openai
 from PIL import Image
 import urllib.parse
 from ast import literal_eval
@@ -23,16 +22,15 @@ abstract_score = ScoreCalculator()
 abstract_summary = SummaryGenerator(openai_handler)
 
 # File IDs
-abstract_vec_id = '1-GuSdkDGI2u8JAXibKsU4G1KCPWMK7rV'
-title_vec_id = '1-70bNFFhVrmJKp86i0BzehoeEb8dplHP'
-metas_id = '1-8aTZHij2eu7xF-Dil4PNLcCftX_peqD'
+abstract_vec_id = secrets['gcp_service_account']['abstract_vec_id']
+title_vec_id = secrets['gcp_service_account']['title_vec_id']
+metas_id = secrets['gcp_service_account']['metas_id']
 
 # File paths
 tag_vec_pickle = "./resources/tag_vector.pickle"
 metas_csv_file = "./data/vector/store/aacr_metas.csv"
 title_vec_npy_file = "./data/vector/store/title_vec.npy"
 abstract_vec_npy_file = "./data/vector/store/abstract_vec.npy"
-
 
 # Retry parameters
 retry_kwargs = {
@@ -42,6 +40,7 @@ retry_kwargs = {
 }
 
 embedding_model = "text-embedding-ada-002"
+
 # Load source files
 metas_csv_source = file_handler.load_source_file(metas_csv_file, metas_id)
 title_vec_source = file_handler.load_source_file(title_vec_npy_file, title_vec_id)
@@ -140,8 +139,6 @@ def display_search_results(results: pd.DataFrame):
         st.markdown("---")
 
 
-# Refactored Code Continued
-
 def main():
     st.set_page_config(page_title="LLMによるAACR演題検索システム")
     image = Image.open("banner.png")
@@ -159,17 +156,17 @@ def main():
         "また、論文の内容をChatGPTに要約してもらうことができます。"
     )
 
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
-
     if "search_clicked" not in st.session_state:
         st.session_state.search_clicked = False
 
+    def clear_session_state(key):
+        if key in st.session_state:
+            st.session_state.pop(key)
+
     def clear_session():
         st.session_state.search_clicked = False
-        if "summary_clicked" in st.session_state:
-            st.session_state.pop("summary_clicked")
-        if "summary" in st.session_state:
-            st.session_state.pop("summary")
+        clear_session_state("summary_clicked")
+        clear_session_state("summary")
 
     tag_vector = file_handler.load_pickle_file(tag_vec_pickle)
 
@@ -192,10 +189,8 @@ def main():
 
     if st.button("検索"):
         st.session_state.search_clicked = True
-        if "summary_clicked" in st.session_state:
-            st.session_state.pop("summary_clicked")
-        if "summary" in st.session_state:
-            st.session_state.pop("summary")
+        clear_session_state("summary_clicked")
+        clear_session_state("summary")
 
     if st.session_state.search_clicked:
         with st.spinner("検索中..."):
@@ -212,7 +207,8 @@ def main():
                     )
 
             results = search_for_rows(
-                tag_query_vector, text_query_vector, k=num_results, alpha=ratio
+                tag_query_vector, text_query_vector,  # type: ignore
+                k=num_results, alpha=ratio  # type: ignore
                 )
 
         if len(results) > 0:
