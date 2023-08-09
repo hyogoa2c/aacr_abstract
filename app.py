@@ -99,7 +99,7 @@ def display_search_results(results: pd.DataFrame):
     for i, (_, row) in enumerate(results.iterrows()):
         id = row["id"]
         title = row["title"]
-        abstract = row["abstract"]
+        abstract = row["abstract"][0:300]
         if len(row["authors"]) == 1:
             authors = row["authors"]
         elif len(row["authors"]) == 2:
@@ -113,7 +113,7 @@ def display_search_results(results: pd.DataFrame):
                 len(row["affiliations"]) - 1
                 ) + " others"
         st.markdown(f"#### {id}: **{title}**")
-        st.markdown(f"{abstract}")
+        st.markdown(f"**Abstract**\: {abstract} ...")
         st.markdown(f"Author(s)\: {authors}")
         st.markdown(f"Affiliation(s)\: {affiliations}")
 
