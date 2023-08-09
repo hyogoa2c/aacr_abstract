@@ -185,6 +185,7 @@ def main():
         "表示件数:", (20, 50, 100, 200), index=0, on_change=clear_session
     )
 
+
     st.write("検索するには「検索」ボタンをクリックしてください。")
 
     if st.button("検索"):
@@ -192,7 +193,15 @@ def main():
         clear_session_state("summary_clicked")
         clear_session_state("summary")
 
-    if st.session_state.search_clicked:
+    has_get_params = False
+    get_query_params = st.experimental_get_query_params()
+    if len(get_query_params.get("q", "")) > 0 and st.session_state.search_clicked == False:
+        query_text = get_query_params["q"][0]
+        print("query_text", query_text)
+        query_tags = []
+        has_get_params = True
+
+    if st.session_state.search_clicked or has_get_params:
         with st.spinner("検索中..."):
             tag_query_vector = None
             if len(query_tags) > 0:
