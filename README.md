@@ -38,5 +38,5 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/stream
 ## TODO
 
 - [x] /?qで検索語のウインドウが開かないバグの修正＞ChatGPTでも確認＋Streamlitのマニュアルを確認＋<https://github.com/kotarotanahashi/cvpr/>の動きを参考に
-- [ ] アブストラクトの全文確認のためのリンクをhttps://aacrjournals.org/cancerres/search-results?q={urllib.parse.quote(title)}で実行する様に変更する。
+- [x] アブストラクトの全文確認のためのリンクをhttps://aacrjournals.org/cancerres/search-results?q={urllib.parse.quote(title)}で実行する様に変更する。
 - [ ] abstract省略表示の後に、残りのワードカウントを追加表示させる。

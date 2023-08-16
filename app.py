@@ -48,6 +48,8 @@ abstract_vec_source = file_handler.load_source_file(
     abstract_vec_npy_file, abstract_vec_id
     )
 
+journal_url = "https://aacrjournals.org/cancerres/search-results"
+
 
 def search_for_rows(
     tag_query_vector: np.ndarray, text_query_vector: np.ndarray, k: int, alpha: float
@@ -116,6 +118,9 @@ def display_search_results(results: pd.DataFrame):
         st.markdown(f"**Abstract**\: {abstract} ...")
         st.markdown(f"Author(s)\: {authors}")
         st.markdown(f"Affiliation(s)\: {affiliations}")
+
+        journal_link = f"[この研究のアブストラクトをCancer Researchで探す]({journal_url}?q={urllib.parse.quote(title)})"
+        st.markdown(journal_link, unsafe_allow_html=True)
 
         link = f"[この研究と似た論文を探す](/?q={urllib.parse.quote(title)})"
         st.markdown(link, unsafe_allow_html=True)
@@ -195,7 +200,8 @@ def main():
 
     has_get_params = False
     get_query_params = st.experimental_get_query_params()
-    if len(get_query_params.get("q", "")) > 0 and st.session_state.search_clicked == False:
+    if len(get_query_params.get("q", "")) > 0 and \
+            st.session_state.search_clicked is False:
         query_text = get_query_params["q"][0]
         print("query_text", query_text)
         query_tags = []
